@@ -1,0 +1,16 @@
+services:
+  - type: web
+    name: tds-data-analyst-bot
+    env: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn app:app --bind 0.0.0.0:$PORT --timeout 120
+    envVars:
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: PUBLIC_BASE_URL
+        sync: false
+      - key: AGENT_MODEL
+        value: claude-sonnet-4-6
