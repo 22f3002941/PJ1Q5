@@ -17,6 +17,7 @@ Flow per incoming Telegram message:
 
 import json
 import os
+import threading
 import time
 import traceback
 
@@ -62,6 +63,26 @@ def serve_log(chat_id):
     return Response(content, mimetype="application/jsonl")
 
 
+def _process_and_reply(chat_id, history, log_url):
+    """Runs off the request thread so we can ack Telegram immediately --
+    Telegram's webhook read-timeout is much shorter than an agent run
+    (LLM calls + data fetching) can take."""
+    try:
+        answer_obj = run_agent(chat_id, history, log_url)
+        reply_text = json.dumps(answer_obj, ensure_ascii=False)
+    except Exception as e:
+        log_event(chat_id, {"type": "error", "error": str(e), "trace": traceback.format_exc()})
+        reply_text = json.dumps({"answer": None, "log_url": log_url, "error": str(e)})
+
+    history.append({"role": "assistant", "content": reply_text})
+    log_event(chat_id, {"type": "telegram_out", "text": reply_text, "ts": time.time()})
+
+    try:
+        send_message(chat_id, reply_text)
+    except Exception as e:
+        log_event(chat_id, {"type": "error", "error": f"send_message failed: {e}"})
+
+
 @app.route("/webhook", methods=["POST"])
 def webhook():
     update = request.get_json(force=True, silent=True) or {}
@@ -80,17 +101,12 @@ def webhook():
 
     log_url = f"{PUBLIC_BASE_URL}/logs/{chat_id}.jsonl"
 
-    try:
-        answer_obj = run_agent(chat_id, history, log_url)
-        reply_text = json.dumps(answer_obj, ensure_ascii=False)
-    except Exception as e:
-        log_event(chat_id, {"type": "error", "error": str(e), "trace": traceback.format_exc()})
-        reply_text = json.dumps({"answer": None, "log_url": log_url, "error": str(e)})
+    # kick off the (possibly slow) agent run in the background and
+    # ack Telegram right away so it doesn't time out the webhook
+    threading.Thread(
+        target=_process_and_reply, args=(chat_id, history, log_url), daemon=True
+    ).start()
 
-    history.append({"role": "assistant", "content": reply_text})
-    log_event(chat_id, {"type": "telegram_out", "text": reply_text, "ts": time.time()})
-
-    send_message(chat_id, reply_text)
     return jsonify({"ok": True})
 
 
