@@ -11,4 +11,4 @@ jobs:
 
     steps:
       - name: Ping Render
-        run: curl -fsS https://pj1q5.onrender.com/health
+        run: curl -fsS https://pj1q5.onrender.com/
